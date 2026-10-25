@@ -28,6 +28,9 @@ button,.btn{border-color:#dce5f2;font-weight:500;color:#28527f;transition:backgr
 
 .search-zone{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-left:auto}.search-zone label{font-size:11px;letter-spacing:.65px;color:#667f9f;align-self:center}.search-zone input{min-width:260px;flex:1;height:40px;border:1px solid #cbdff5;border-radius:9px;padding:9px 12px;font:inherit;color:#17518c;outline:0}.search-zone input:focus{border-color:#298bda;box-shadow:0 0 0 3px #298bda16}.sheet input.attention{background:#ffe6e8!important;color:#a22539!important;box-shadow:inset 0 0 0 1px #f7c0c8}.bill-toolbar{display:none}.paste-wrap{display:block!important}.paste-wrap .paste-area{min-height:95px}.bill-divider td{background:#eaf3ff!important}.empty-placeholder{line-height:1.6}@media(max-width:650px){.search-zone{width:100%;margin:8px 0}.search-zone input{min-width:120px;width:100%}}
 
+/* V9: per-bill categorization, independent of the user selection */
+.bill-head select.bill-type-select{width:163px;min-width:140px;max-width:190px;height:38px;padding:6px 9px;border-radius:8px;border:1px solid #cbdff5;background:#fff;color:#234b78;font:inherit;font-weight:450;cursor:pointer}
+.bill-head select.bill-type-select:focus{outline:2px solid #94c3f9}
 /* V6 — bill metadata, item notes, and progressive approval states */
 .bill-heading{background:#e8f3ff!important;border-top:2px solid #2581d8!important}
 .bill-heading td{padding:10px 14px!important}.bill-head{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
@@ -64,7 +67,7 @@ const $=id=>document.getElementById(id),safe=v=>String(v??'').trim();
 let serial=0,branch='Shailesh',active=null,all=true,query='',timer,store;
 function id(){return 'bill-'+Date.now().toString(36)+'-'+(++serial)}
 function empty(){let b={};branches.forEach(k=>b[k]={bills:[]});return {version:4,branches:b,other:[]}}
-function migrate(x){const v=empty();if(!x)return v;const b=x.bills||x.branches?.[branch]?.bills||[];v.branches[branch].bills=(Array.isArray(b)?b:[]).filter(z=>Array.isArray(z.rows)).map(z=>({id:z.id||id(),number:z.number||'',billRemark:z.billRemark||'',rows:z.rows.map(r=>({...r,original:r.original||Object.fromEntries(keys.map(k=>[k,safe(r[k])]))}))}));v.other=Array.isArray(x.other)?x.other:[];return v}
+function migrate(x){const v=empty();if(!x)return v;const b=x.bills||x.branches?.[branch]?.bills||[];v.branches[branch].bills=(Array.isArray(b)?b:[]).filter(z=>Array.isArray(z.rows)).map(z=>({id:z.id||id(),number:z.number||'',billRemark:z.billRemark||'',billType:z.billType||'',rows:z.rows.map(r=>({...r,original:r.original||Object.fromEntries(keys.map(k=>[k,safe(r[k])]))}))}));v.other=Array.isArray(x.other)?x.other:[];return v}
 store=empty();
 function toast(s){const el=$('toast');el.textContent=s;el.style.display='block';clearTimeout(timer);timer=setTimeout(()=>el.style.display='none',2500)}
 function save(){queueCloudSave()}
@@ -149,7 +152,7 @@ function selected(){return bills().find(x=>x.id===active)}
 function ensure(){if(!selected()){if(!bills().length)bills().push({id:id(),rows:[]});active=bills()[bills().length-1].id}return selected()}
 function shownBills(){return all||query?bills():selected()?[selected()]:[]}
 function matches(r){if(!query)return true;const vals=other()?[r.part,r.remark,r.status?'approved':'pending']:keys.map(k=>r[k]).concat(amounts(r),r.itemRemark||'',r.status?'approved':'pending');return vals.some(v=>safe(v).toLowerCase().includes(query))}
-function billMatches(b){return !!query&&[b.number,b.billRemark].some(v=>safe(v).toLowerCase().includes(query))}
+function billMatches(b){return !!query&&[b.number,b.billRemark,b.billType].some(v=>safe(v).toLowerCase().includes(query))}
 function visibleRows(){return other()?store.other.filter(matches):shownBills().flatMap(b=>billMatches(b)?b.rows:b.rows.filter(matches))}
 function freshRate(c=[]){let r={status:false,approvals:0,itemRemark:''};keys.forEach((k,i)=>r[k]=safe(c[i]));r.original=Object.fromEntries(keys.map(k=>[k,safe(r[k])]));return r}
 function freshRemark(c=[]){return {part:safe(c[0]),remark:safe(c.slice(1).join(' ')),status:false,approvals:0}}
@@ -170,7 +173,12 @@ function billHeader(b,idx){
  let wrap=document.createElement('div');wrap.className='bill-head';
  let name=document.createElement('strong');name.textContent='BILL '+(bills().indexOf(b)+1);wrap.append(name);
  function editableMeta(label,key,placeholder,classname){let lab=document.createElement('label');lab.textContent=label+' ';let input=document.createElement('input');input.placeholder=placeholder;input.value=b[key]||'';input.className=classname||'';input.addEventListener('input',()=>{b[key]=input.value;save()});lab.append(input);wrap.append(lab)}
- editableMeta('Bill Number','number','Paste / type bill number');editableMeta('Bill Remark','billRemark','Remark for entire bill','bill-remark');
+ editableMeta('Bill Number','number','Paste / type bill number');
+ let typeLabel=document.createElement('label');typeLabel.textContent='Bill Type ';
+ let typeSelect=document.createElement('select');typeSelect.className='bill-type-select';typeSelect.setAttribute('aria-label','Bill Type');
+ [['','Select type'],['HO','HO'],['Life HO','Life HO'],['WHD','WHD (Wholesale)'],['Life WHD','Life WHD (Life Wholesale)']].forEach(([value,label])=>{let opt=document.createElement('option');opt.value=value;opt.textContent=label;typeSelect.append(opt)});
+ typeSelect.value=b.billType||'';typeSelect.addEventListener('change',()=>{b.billType=typeSelect.value;save()});typeLabel.append(typeSelect);wrap.append(typeLabel);
+ editableMeta('Bill Remark','billRemark','Remark for entire bill','bill-remark');
  let count=document.createElement('span');count.className='bill-count';count.textContent=b.rows.length+' items';wrap.append(count);
  let focus=document.createElement('button');focus.textContent=active===b.id?'● Paste Target':'Select for Paste';focus.className=active===b.id?'bill-focus':'';focus.onclick=()=>{active=b.id;render();$('paste-area').focus()};wrap.append(focus);
  let del=document.createElement('button');del.textContent='Delete Bill';del.className='bill-delete';del.onclick=()=>deleteBill(b);wrap.append(del);

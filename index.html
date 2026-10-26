@@ -54,14 +54,14 @@ button,.btn{border-color:#dce5f2;font-weight:500;color:#28527f;transition:backgr
 <section class="panel"><div class="bar"><div class="title-line"><div><h2 id="sheet-title">HO — Rate Limit Sheet</h2><span class="sub" id="sheet-sub">12 software columns • HSN, Unit और Rate से CD editable</span></div><div class="search-zone"><label for="global-search">SEARCH ALL COLUMNS</label><input type="search" id="global-search" placeholder="Bill No, Part No, Name, HSN, Unit, Qty, Rate, Remark…" autocomplete="off"><button class="primary" id="new-bill">+ Add New Bill</button><button id="show-all" class="soft-btn">All Bills</button></div></div></div>
 <details class="tool-drawer" id="tools-drawer"><summary>⌄ &nbsp; Sheet Tools · Backup / Restore / Clear</summary><div class="actions"><button id="export">↓ Backup JSON</button><button id="import-trigger">↑ Restore JSON</button><input type="file" id="import-file" accept=".json,application/json" class="hidden"><button class="danger" id="delete-bill">Delete Current Bill</button><button class="danger" id="clear">All Clear (Current Branch)</button></div></details>
 
-<div class="table-scroll" id="scroll"><table class="sheet" id="rate-table"><colgroup><col style="width:48px"><col style="width:98px"><col style="width:265px"><col style="width:95px"><col style="width:58px"><col style="width:55px"><col style="width:78px"><col style="width:62px"><col style="width:75px"><col style="width:74px"><col style="width:67px"><col style="width:52px"><col style="width:90px"><col style="width:96px"><col style="width:66px"><col style="width:220px"><col style="width:34px"></colgroup><thead><tr><th>Sr.<br>No</th><th>Code</th><th>Name</th><th>HSN</th><th>Unit</th><th>Qty</th><th>Rate ₹</th><th>Disc<br>%</th><th>Disc<br>Amt ₹</th><th>Sch<br>Disc %</th><th>Sch<br>Rs ₹</th><th>CD<br>%</th><th>Limit<br>₹</th><th>T-Fit<br>Limit ₹</th><th>Status</th><th>Item Remark</th><th></th></tr></thead><tbody id="rate-body"></tbody></table>
+<div class="table-scroll" id="scroll"><table class="sheet" id="rate-table"><colgroup><col style="width:48px"><col style="width:98px"><col style="width:104px"><col style="width:95px"><col style="width:58px"><col style="width:55px"><col style="width:78px"><col style="width:62px"><col style="width:75px"><col style="width:74px"><col style="width:67px"><col style="width:52px"><col style="width:90px"><col style="width:96px"><col style="width:66px"><col style="width:220px"><col style="width:34px"></colgroup><thead><tr><th>Sr.<br>No</th><th>Code</th><th>Name</th><th>HSN</th><th>Unit</th><th>Qty</th><th>Rate ₹</th><th>Disc<br>%</th><th>Disc<br>Amt ₹</th><th>Sch<br>Disc %</th><th>Sch<br>Rs ₹</th><th>CD<br>%</th><th>Limit<br>₹</th><th>T-Fit<br>Limit ₹</th><th>Status</th><th>Item Remark</th><th></th></tr></thead><tbody id="rate-body"></tbody></table>
 <table class="sheet remark-sheet hidden" id="remark-table"><colgroup><col style="width:190px"><col><col style="width:100px"><col style="width:48px"></colgroup><thead><tr><th>Part No / Code</th><th>Remark</th><th>Status</th><th></th></tr></thead><tbody id="remark-body"></tbody></table></div>
 <details class="paste-wrap" id="paste-details" open><summary>Bulk Paste</summary><div class="help" id="paste-help">Software से <strong>Sr. No से CD (12 columns)</strong> copy करके यहाँ Ctrl+V करें — बिना किसी बटन के तुरंत ऊपर जुड़ जाएगा।</div><textarea id="paste-area" class="paste-area" spellcheck="false" placeholder="Excel / software की rows यहाँ Ctrl+V करें — auto add"></textarea></details>
 <datalist id="remark-options"><option value="108"><option value="WHD માં બનાવું"><option value="Max DISC limit"><option value="List આપવું"></datalist><div class="notice">Limit = Rate → Discount % → Discount Amount ₹ → Scheme Discount % → Scheme ₹ → CD %. &nbsp; T-Fit Limit = Limit − ₹0.10. &nbsp; Amounts show 2 decimals.</div></section>
 <div class="footer-note">Google Sheets cloud storage active • Google Sheet में Rows और Status स्वतः अपडेट होते हैं। इंटरनेट कनेक्शन जरूरी है।</div></main><div id="toast" role="status"></div>
 <script>
 (()=>{'use strict';
-const KEY='rajgroup-v10',branches=['Shailesh','Darshil','Dipak','User 4','User 5','AKKI'],keys=['sr','code','name','hsn','unit','qty','rate','disc','discAmt','schDisc','schRs','cd'];
+const KEY='rajgroup-v11',branches=['Shailesh','Darshil','Dipak','User 4','User 5','AKKI'],keys=['sr','code','name','hsn','unit','qty','rate','disc','discAmt','schDisc','schRs','cd'];
 const editable=new Set(['hsn','unit','rate','disc','discAmt','schDisc','schRs','cd']),required=new Set(['hsn','unit','rate','disc']);
 const $=id=>document.getElementById(id),safe=v=>String(v??'').trim();
 let serial=0,branch='Shailesh',active=null,all=true,query='',dateFilter='',timer,store;
@@ -79,16 +79,47 @@ cloudNode.id='cloud-gate';
 cloudNode.style.cssText='position:fixed;inset:0;z-index:999;background:#f5f8fde8;display:flex;align-items:center;justify-content:center;font:600 18px Segoe UI,Arial;color:#1759a4;text-align:center;padding:25px';
 cloudNode.textContent='Google Sheet से कनेक्ट हो रहा है…';
 document.body.append(cloudNode);
+// Browser notifications require permission and an open browser tab.
+let notificationCursor=0,notificationPolling=false;
+function notifyDesktopV12(title,message){
+ if(!('Notification' in window)||Notification.permission!=='granted')return;
+ try{const n=new Notification(title,{body:message,tag:'rajgroup-'+Date.now(),icon:document.querySelector('header img')?.src||undefined});n.onclick=()=>{window.focus();n.close()}}catch(err){console.warn('Notifications blocked',err)}
+}
+async function checkNotificationsV12(){
+ if(!cloudReady||notificationPolling)return;
+ notificationPolling=true;
+ try{
+  const view=branch;const data=await jsonp('notifications',view);
+  if(!data.ok||view!==branch)return;
+  // First poll establishes baseline and avoids replaying old alerts.
+  if(notificationCursor){for(const event of data.events||[]){if(event.time>notificationCursor){
+    const title=view==='AKKI'?'RAJ GROUP • New employee update':'RAJ GROUP • AKKI update';
+    notifyDesktopV12(title,event.message);
+    toast(event.message);
+  }}}
+  notificationCursor=Math.max(notificationCursor,Number(data.cursor)||Date.now());
+ }catch(e){console.warn('Notification polling',e)}finally{notificationPolling=false}
+}
+function showPermissionButtonV12(){
+ if(!('Notification' in window))return;
+ const btn=document.createElement('button');btn.type='button';btn.id='enable-notifications';
+ btn.textContent=Notification.permission==='granted'?'🔔 Notifications On':'🔔 Enable Notifications';
+ btn.style.cssText='position:fixed;right:16px;bottom:17px;z-index:500;background:#145fc1;border:0;color:white;border-radius:11px;padding:10px 15px;font:500 13px Segoe UI,Arial;box-shadow:0 3px 16px #31517f55;cursor:pointer';
+ btn.onclick=async()=>{try{const p=await Notification.requestPermission();btn.textContent=p==='granted'?'🔔 Notifications On':'🔕 Notifications Blocked';if(p==='granted')toast('Chrome notifications enabled')}catch(e){toast('Browser notification permission unavailable')}};
+ document.body.append(btn);
+}
+showPermissionButtonV12();
+setInterval(checkNotificationsV12,10000);
 let serverRevision='',localDirty=false,syncRunning=false,cloudTimer=null,cloudReady=false,lastUserChange=0,akkiQueue=Promise.resolve();
 function syncBadge(message,isError=false){const b=document.querySelector('.badge');if(b){b.textContent=message;b.style.color=isError?'#bb2638':'#1963aa'}}
-function jsonp(action){return new Promise((resolve,reject)=>{
+function jsonp(action,selectedUser=branch){return new Promise((resolve,reject)=>{
  const cb='rajCloudCallback'+Date.now()+'_'+Math.floor(Math.random()*1e7);
  const script=document.createElement('script');let settled=false;
  const finish=(error,data)=>{if(settled)return;settled=true;clearTimeout(timeout);script.remove();try{delete window[cb]}catch{};error?reject(error):resolve(data)};
  const timeout=setTimeout(()=>finish(Error('Google Script response timeout')),25000);
  window[cb]=data=>finish(null,data);
  script.onerror=()=>finish(Error('Google Script URL inaccessible'));
- script.src=APPS_SCRIPT_URL+'?action='+encodeURIComponent(action)+'&user='+encodeURIComponent(branch)+'&callback='+cb+'&t='+Date.now();
+ script.src=APPS_SCRIPT_URL+'?action='+encodeURIComponent(action)+'&user='+encodeURIComponent(selectedUser)+'&callback='+cb+'&t='+Date.now();
  document.head.append(script);
 })}
 async function sendSnapshot(payload){
@@ -96,31 +127,43 @@ async function sendSnapshot(payload){
  // confirmed JSONP GET works from a GitHub Pages static HTML app.
  await fetch(APPS_SCRIPT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)});
 }
+// Every seat has its own pending sync. Switching users never discards an unsaved snapshot.
+const seatSync = new Map();
 function queueCloudSave(){
  if(!cloudReady||branch==='AKKI')return;
- localDirty=true;lastUserChange=Date.now();syncBadge('● Saving to Google Sheet…');
- clearTimeout(cloudTimer);cloudTimer=setTimeout(flushCloud,850);
+ const user=branch;
+ let job=seatSync.get(user);
+ if(!job){job={dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null};seatSync.set(user,job)}
+ job.dirty=true;job.snapshot={bills:JSON.parse(JSON.stringify(store.branches[user].bills)),other:JSON.parse(JSON.stringify(store.other))};
+ lastUserChange=Date.now();syncBadge('● Saving to Google Sheet…');
+ clearTimeout(job.timer);job.timer=setTimeout(()=>flushSeat(user),300);
 }
-async function flushCloud(){
- if(syncRunning||!cloudReady||!localDirty)return;
- syncRunning=true;localDirty=false;
- const snapshot=JSON.stringify(store),token='change-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+async function flushSeat(user){
+ const job=seatSync.get(user);
+ if(!job||job.running||!job.dirty)return;
+ job.running=true;job.dirty=false;
+ const snapshot=job.snapshot,token='change-'+Date.now()+'-'+Math.random().toString(36).slice(2);
  try{
-  await sendSnapshot({action:'saveUser',user:branch,baseToken:serverRevision,token:token,data:{bills:JSON.parse(snapshot).branches[branch].bills,other:JSON.parse(snapshot).other}});
+  await sendSnapshot({action:'saveUser',user,baseToken:job.revision,token,data:snapshot});
   let confirmed=false;
-  for(let i=0;i<6;i++){
-   await new Promise(r=>setTimeout(r,650+i*500));
-   const info=await jsonp('state');
+  for(let i=0;i<7;i++){
+   await new Promise(r=>setTimeout(r,450+i*230));
+   const info=await jsonp('state',user);
    if(!info.ok)throw Error(info.error||'Server error');
-   if(info.token===token){serverRevision=info.token;confirmed=true;break} if(info.token && info.token!==serverRevision)throw Error('Another session updated this user; reload before making more changes')
+   if(info.token===token){job.revision=info.token;confirmed=true;break}
+   if(info.token&&info.token!==job.revision)throw Error('Another session updated '+user+'; reload before editing');
   }
   if(!confirmed)throw Error('Cloud save not confirmed');
-  syncBadge('✓ Saved to Google Sheet');
+  if(branch===user){serverRevision=job.revision;syncBadge(job.dirty?'● Saving newer changes…':'✓ Saved to Google Sheet')}
  }catch(e){
-  localDirty=true;syncBadge('⚠ Cloud sync failed — retrying',true);
-  console.error('Google Sheets sync',e);
-  setTimeout(flushCloud,6500);
- }finally{syncRunning=false;if(localDirty)setTimeout(flushCloud,1200)}
+  job.dirty=true;console.error('Google Sheets sync '+user,e);
+  if(branch===user)syncBadge('⚠ Cloud sync failed — retrying',true);
+  // Conflicts need a reload rather than blindly replacing another session's state.
+  if(String(e.message||'').includes('Another session')){job.conflict=true;return}
+ }finally{
+  job.running=false;
+  if(job.dirty&&!job.conflict){clearTimeout(job.timer);job.timer=setTimeout(()=>flushSeat(user),1500)}
+ }
 }
 async function initCloud(){
  if(!APPS_SCRIPT_URL.startsWith('https://script.google.com/macros/s/')){
@@ -129,14 +172,15 @@ async function initCloud(){
  }
  try{
   const response=await jsonp(branch==='AKKI'?'master':'user');if(!response.ok)throw Error(response.error||'Connection failed');
-  store=migrate(response.data||empty());serverRevision=response.token||'';
-  cloudReady=true;
+  store=migrate(response.data||empty());serverRevision=response.token||'';seatSync.set(branch,{dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null});
+  cloudReady=true;notificationCursor=0;
   active=null;ensure();render();
+  checkNotificationsV12();
   cloudNode.remove();syncBadge('✓ Connected to Google Sheet');
   setInterval(async()=>{
-   if(!cloudReady||localDirty||syncRunning||Date.now()-lastUserChange<3500)return;
-   try{const remote=await jsonp(branch==='AKKI'?'master':'user');if(!remote.ok||remote.token===serverRevision)return;
-      store=migrate(remote.data||empty());serverRevision=remote.token||'';
+   if(!cloudReady||(seatSync.get(branch)?.dirty||seatSync.get(branch)?.running)||Date.now()-lastUserChange<3500)return;
+   try{const viewing=branch;const remote=await jsonp(viewing==='AKKI'?'master':'user',viewing);if(viewing!==branch||!cloudReady||!remote.ok||remote.token===serverRevision)return;
+      store=migrate(remote.data||empty());serverRevision=remote.token||'';if(seatSync.has(branch))seatSync.get(branch).revision=serverRevision;
       active=null;all=true;ensure();render();syncBadge('↻ Updated from Google Sheet');
    }catch(e){syncBadge('⚠ Connection issue',true)}
   },12000);
@@ -207,7 +251,19 @@ function render(){let o=other();$('rate-table').classList.toggle('hidden',o);$('
 
 function parse(text){return String(text).replace(/\r/g,'').split('\n').filter(x=>x.trim()).map(x=>x.split('\t'))}
 function bulk(data,start=-1,col=0,target=null){if(!data.length||branch==='AKKI')return;let arr=other()?store.other:(target||ensure()).rows;if(start<0)start=arr.length;data.forEach((cols,di)=>{let at=start+di;while(arr.length<=at)arr.push(other()?freshRemark():freshRate());let r=arr[at];cols.forEach((raw,j)=>{let k=col+j;if(other()){if(k===0)r.part=safe(raw);else if(k===1)r.remark=safe(raw)}else if(k<keys.length){r[keys[k]]=safe(raw);if(!r.original)r.original={};r.original[keys[k]]=safe(raw)}})});save();render();toast(data.length+' row(s) automatically added')}
-$('branch').onchange=async e=>{if(localDirty||syncRunning){$('branch').value=branch;toast('Saving... please change user after save');return;}branch=e.target.value;cloudReady=false;cloudNode.textContent='Loading '+branch+'…';document.body.append(cloudNode);try{const response=await jsonp(branch==='AKKI'?'master':'user');if(!response.ok)throw Error(response.error||'Failed');store=migrate(response.data||{});serverRevision=response.token||'';active=null;all=true;query='';dateFilter='';$('date-filter').value='';$('global-search').value='';ensure();render();cloudReady=true;cloudNode.remove();syncBadge('✓ '+branch+' connected');}catch(error){cloudNode.textContent='Error: '+error.message;syncBadge('⚠ Unable to load user',true)}};
+$('branch').onchange=async e=>{const previous=branch, next=e.target.value;
+ if(next===previous)return;
+ const oldJob=seatSync.get(previous);
+ if(oldJob?.conflict){$('branch').value=previous;toast('Save conflict. Refresh before switching.');return}
+ // Start outgoing save immediately; it keeps its OWN user and snapshot even if we switch seats.
+ if(oldJob?.dirty){clearTimeout(oldJob.timer);flushSeat(previous)}
+ branch=next;notificationCursor=0;cloudReady=false;cloudNode.textContent='Loading '+branch+'…';document.body.append(cloudNode);try{const response=await jsonp(next==='AKKI'?'master':'user',next);if(next!==branch)return;if(!response.ok)throw Error(response.error||'Failed');const unfinished=seatSync.get(next);
+ store=migrate(response.data||{});serverRevision=response.token||'';
+ if(unfinished&&(unfinished.running||unfinished.dirty)){
+   store.branches[next].bills=JSON.parse(JSON.stringify(unfinished.snapshot.bills));
+   store.other=JSON.parse(JSON.stringify(unfinished.snapshot.other));
+ }
+ if(next!=='AKKI')if(!unfinished||( !unfinished.running&&!unfinished.dirty))seatSync.set(next,{dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null});active=null;all=true;query='';dateFilter='';$('date-filter').value='';$('global-search').value='';ensure();render();cloudReady=true;cloudNode.remove();checkNotificationsV12();syncBadge('✓ '+branch+' connected');}catch(error){cloudNode.textContent='Error: '+error.message;syncBadge('⚠ Unable to load user',true)}};
 $('date-filter').onchange=e=>{dateFilter=e.target.value;render()};
 $('global-search').oninput=e=>{query=safe(e.target.value).toLowerCase();render()};
 $('new-bill').onclick=()=>{if(other())return;let b={id:id(),rows:[],createdAt:new Date().toISOString()};bills().push(b);active=b.id;all=true;query='';$('global-search').value='';save();render();$('paste-area').focus();toast('New bill ready — paste rows below')};

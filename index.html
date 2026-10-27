@@ -56,7 +56,7 @@ button,.btn{border-color:#dce5f2;font-weight:500;color:#28527f;transition:backgr
 
 <div class="table-scroll" id="scroll"><table class="sheet" id="rate-table"><colgroup><col style="width:48px"><col style="width:98px"><col style="width:104px"><col style="width:95px"><col style="width:58px"><col style="width:55px"><col style="width:78px"><col style="width:62px"><col style="width:75px"><col style="width:74px"><col style="width:67px"><col style="width:52px"><col style="width:90px"><col style="width:96px"><col style="width:66px"><col style="width:220px"><col style="width:34px"></colgroup><thead><tr><th>Sr.<br>No</th><th>Code</th><th>Name</th><th>HSN</th><th>Unit</th><th>Qty</th><th>Rate ₹</th><th>Disc<br>%</th><th>Disc<br>Amt ₹</th><th>Sch<br>Disc %</th><th>Sch<br>Rs ₹</th><th>CD<br>%</th><th>Limit<br>₹</th><th>T-Fit<br>Limit ₹</th><th>Status</th><th>Item Remark</th><th></th></tr></thead><tbody id="rate-body"></tbody></table>
 <table class="sheet remark-sheet hidden" id="remark-table"><colgroup><col style="width:190px"><col><col style="width:100px"><col style="width:48px"></colgroup><thead><tr><th>Part No / Code</th><th>Remark</th><th>Status</th><th></th></tr></thead><tbody id="remark-body"></tbody></table></div>
-<details class="paste-wrap" id="paste-details" open><summary>Bulk Paste</summary><div class="help" id="paste-help">Software से <strong>Sr. No से CD (12 columns)</strong> copy करके यहाँ Ctrl+V करें — बिना किसी बटन के तुरंत ऊपर जुड़ जाएगा।</div><textarea id="paste-area" class="paste-area" spellcheck="false" placeholder="Excel / software की rows यहाँ Ctrl+V करें — auto add"></textarea></details>
+<details class="paste-wrap" id="paste-details" open><summary>Bulk Paste</summary><div class="help" id="paste-help">Software से <strong>Sr. No से CD (12 columns)</strong> कॉपी करें → यहाँ Ctrl+V → नीचे Preview में सुधार करें → <strong>Add to Sheet</strong> दबाएँ। Add से पहले Google Sheet में डेटा नहीं जाएगा।</div><textarea id="paste-area" class="paste-area" spellcheck="false" placeholder="Excel / Software rows यहाँ Ctrl+V करें — Preview में बदलें, फिर Add to Sheet दबाएँ"></textarea></details>
 <datalist id="remark-options"><option value="108"><option value="WHD માં બનાવું"><option value="Max DISC limit"><option value="List આપવું"></datalist><div class="notice">Limit = Rate → Discount % → Discount Amount ₹ → Scheme Discount % → Scheme ₹ → CD %. &nbsp; T-Fit Limit = Limit − ₹0.10. &nbsp; Amounts show 2 decimals.</div></section>
 <div class="footer-note">Google Sheets cloud storage active • Google Sheet में Rows और Status स्वतः अपडेट होते हैं। इंटरनेट कनेक्शन जरूरी है।</div></main><div id="toast" role="status"></div>
 <script>
@@ -136,7 +136,7 @@ function queueCloudSave(){
  if(!job){job={dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null};seatSync.set(user,job)}
  job.dirty=true;job.snapshot={bills:JSON.parse(JSON.stringify(store.branches[user].bills)),other:JSON.parse(JSON.stringify(store.other))};
  lastUserChange=Date.now();syncBadge('● Saving to Google Sheet…');
- clearTimeout(job.timer);job.timer=setTimeout(()=>flushSeat(user),300);
+ clearTimeout(job.timer);job.timer=setTimeout(()=>flushSeat(user),1100);
 }
 async function flushSeat(user){
  const job=seatSync.get(user);
@@ -178,7 +178,7 @@ async function initCloud(){
   checkNotificationsV12();
   cloudNode.remove();syncBadge('✓ Connected to Google Sheet');
   setInterval(async()=>{
-   if(!cloudReady||(seatSync.get(branch)?.dirty||seatSync.get(branch)?.running)||Date.now()-lastUserChange<3500)return;
+   if(!cloudReady||(seatSync.get(branch)?.dirty||seatSync.get(branch)?.running)||(branch==='AKKI'&&(akkiDrafts.size||akkiRequests>0||!!document.activeElement?.matches('.item-remark, input.editable')))||Date.now()-lastUserChange<3500)return;
    try{const viewing=branch;const remote=await jsonp(viewing==='AKKI'?'master':'user',viewing);if(viewing!==branch||!cloudReady||!remote.ok||remote.token===serverRevision)return;
       store=migrate(remote.data||empty());serverRevision=remote.token||'';if(seatSync.has(branch))seatSync.get(branch).revision=serverRevision;
       active=null;all=true;ensure();render();syncBadge('↻ Updated from Google Sheet');
@@ -191,9 +191,32 @@ async function initCloud(){
 }
 
 
+// V13: debounce AKKI text edits; coalesce consecutive changes to the same row.
+// Approval clicks remain immediate. Never send half-typed remarks to Google Sheets.
+let akkiRequests=0;
+const akkiDrafts=new Map();
+function akkiDraftKey(r){return String(r.owner)+'|'+String(r.uid)}
+function akkiSchedule(r,changes){
+ if(!r.uid||!r.owner)return;
+ const key=akkiDraftKey(r);
+ let entry=akkiDrafts.get(key);
+ if(!entry){entry={row:r,changes:{},timer:null};akkiDrafts.set(key,entry)}
+ Object.assign(entry.changes,changes);
+ clearTimeout(entry.timer);
+ entry.timer=setTimeout(()=>akkiCommitKey(key),1150);
+}
+function akkiCommitKey(key){
+ const entry=akkiDrafts.get(key);
+ if(!entry)return;
+ clearTimeout(entry.timer);akkiDrafts.delete(key);
+ akkiPatch(entry.row,entry.changes);
+}
+function akkiCommitRow(r){akkiCommitKey(akkiDraftKey(r))}
+function akkiCommitAll(){for(const key of Array.from(akkiDrafts.keys()))akkiCommitKey(key)}
 function akkiPatch(r,changes){
  if(!r.uid||!r.owner){toast('Missing item ID; reload page');return}
  const owner=r.owner,uid=r.uid;
+ akkiRequests++;
  akkiQueue=akkiQueue.then(async()=>{
    syncBadge('● AKKI approval syncing…');
    await sendSnapshot({action:'patchAkki',owner,uid,changes});
@@ -206,7 +229,7 @@ function akkiPatch(r,changes){
      if(item&&Object.entries(changes).every(([k,v])=>String(item[k]??'')===String(v??''))){syncBadge('✓ AKKI updated '+owner);return}
    }
    throw Error('AKKI update was not confirmed');
- }).catch(err=>{console.error(err);syncBadge('⚠ AKKI sync failed; reload before retry',true);toast('Cloud approval not confirmed')});
+ }).catch(err=>{console.error(err);syncBadge('⚠ AKKI sync failed; reload before retry',true);toast('Cloud approval not confirmed')}).finally(()=>{akkiRequests=Math.max(0,akkiRequests-1)});
 }
 function other(){return false}
 function bills(){return other()?[]:store.branches[branch].bills}
@@ -223,11 +246,11 @@ function cash(n){return Math.max(0,Number.isFinite(n)?n:0).toFixed(2)}
 function amounts(r){let v=Math.max(0,num(r.rate));v=Math.max(0,v*(1-num(r.disc)/100));v=Math.max(0,v-num(r.discAmt));v=Math.max(0,v*(1-num(r.schDisc)/100));v=Math.max(0,v-num(r.schRs));v=Math.max(0,v*(1-num(r.cd)/100));let a=Number(cash(v));return [cash(a),cash(a-.10)]}
 function td(){return document.createElement('td')}
 function updateMark(inp,r,k){const missing=required.has(k)&&!safe(r[k]);const altered=editable.has(k)&&safe(r[k])!==safe(r.original?.[k]);inp.classList.toggle('attention',!!(missing||altered));inp.title=missing?'Required field is blank':altered?'Manually changed from pasted value: '+safe(r.original?.[k]):editable.has(k)?'Editable':'Fixed'}
-function field(r,index,k){const cell=td(),inp=document.createElement('input'),can=editable.has(k);inp.value=r[k]??'';inp.dataset.col=index;inp.dataset.key=k;inp.className=(can?'editable':'locked')+(['qty','rate','disc','discAmt','schDisc','schRs','cd'].includes(k)?' num':'')+(['hsn','unit'].includes(k)?' editable-secondary':'');inp.readOnly=!can;updateMark(inp,r,k);if(can)inp.addEventListener('input',()=>{r[k]=inp.value;updateMark(inp,r,k);if(branch==='AKKI')akkiPatch(r,{[k]:r[k]});else save();recalc(inp.closest('tr'),r);stats()});cell.append(inp);return cell}
-function statusCell(r){let c=td(),b=document.createElement('button');function paint(){let n=Number(r.approvals)||0;b.className='status-btn '+(!r.status?(n===0?'pending':n===1?'pending-again':'pending-later'):(n===1?'done':n===2?'revised':n===3?'approved-three':'approved-many'));b.textContent=r.status?'✓':'✕';b.title=r.status?'Mark pending':'Approve (round '+(n+1)+')'}paint();b.onclick=()=>{if(r.status)r.status=false;else{r.status=true;r.approvals=(Number(r.approvals)||0)+1}paint();if(branch==='AKKI')akkiPatch(r,{status:r.status,approvals:r.approvals});else save();stats()};c.append(b);return c}
+function field(r,index,k){const cell=td(),inp=document.createElement('input'),can=editable.has(k);inp.value=r[k]??'';inp.dataset.col=index;inp.dataset.key=k;inp.className=(can?'editable':'locked')+(['qty','rate','disc','discAmt','schDisc','schRs','cd'].includes(k)?' num':'')+(['hsn','unit'].includes(k)?' editable-secondary':'');inp.readOnly=!can;updateMark(inp,r,k);if(can)inp.addEventListener('input',()=>{r[k]=inp.value;updateMark(inp,r,k);if(branch==='AKKI')akkiSchedule(r,{[k]:r[k]});else save();recalc(inp.closest('tr'),r);stats()});if(can&&branch==='AKKI')inp.addEventListener('blur',()=>akkiCommitRow(r));cell.append(inp);return cell}
+function statusCell(r){let c=td(),b=document.createElement('button');function paint(){let n=Number(r.approvals)||0;b.className='status-btn '+(!r.status?(n===0?'pending':n===1?'pending-again':'pending-later'):(n===1?'done':n===2?'revised':n===3?'approved-three':'approved-many'));b.textContent=r.status?'✓':'✕';b.title=r.status?'Mark pending':'Approve (round '+(n+1)+')'}paint();b.onclick=()=>{if(r.status)r.status=false;else{r.status=true;r.approvals=(Number(r.approvals)||0)+1}paint();if(branch==='AKKI'){akkiCommitRow(r);akkiPatch(r,{status:r.status,approvals:r.approvals})}else save();stats()};c.append(b);return c}
 function removeCell(r,arr){let c=td(),b=document.createElement('button');b.className='delete';b.textContent='×';b.title='Delete this row';b.disabled=branch==='AKKI';b.onclick=()=>{let i=arr.indexOf(r);if(i>=0&&branch!=='AKKI'){arr.splice(i,1);save();render()}};c.append(b);return c}
 function recalc(tr,r){const [limit,fit]=amounts(r);tr.querySelector('[data-limit]').textContent=limit;tr.querySelector('[data-fit]').textContent=fit}
-function rowRate(r,arr,b){let tr=document.createElement('tr');tr.dataset.row=arr.indexOf(r);tr.dataset.bill=b.id;keys.forEach((k,i)=>tr.append(field(r,i,k)));let c=td(),s=document.createElement('span');s.className='calc';s.dataset.limit='';c.append(s);tr.append(c);c=td();s=document.createElement('span');s.className='fit';s.dataset.fit='';c.append(s);tr.append(c,statusCell(r));c=td();let note=document.createElement('input');note.className='item-remark';note.setAttribute('list','remark-options');note.placeholder='Select or type remark…';note.value=r.itemRemark||'';note.oninput=()=>{r.itemRemark=note.value;if(branch==='AKKI')akkiPatch(r,{itemRemark:r.itemRemark});else save()};c.append(note);tr.append(c,removeCell(r,arr));recalc(tr,r);return tr}
+function rowRate(r,arr,b){let tr=document.createElement('tr');tr.dataset.row=arr.indexOf(r);tr.dataset.bill=b.id;keys.forEach((k,i)=>tr.append(field(r,i,k)));let c=td(),s=document.createElement('span');s.className='calc';s.dataset.limit='';c.append(s);tr.append(c);c=td();s=document.createElement('span');s.className='fit';s.dataset.fit='';c.append(s);tr.append(c,statusCell(r));c=td();let note=document.createElement('input');note.className='item-remark';note.setAttribute('list','remark-options');note.placeholder='Select or type remark…';note.value=r.itemRemark||'';note.oninput=()=>{r.itemRemark=note.value;if(branch==='AKKI')akkiSchedule(r,{itemRemark:r.itemRemark});else save()};if(branch==='AKKI')note.addEventListener('blur',()=>akkiCommitRow(r));c.append(note);tr.append(c,removeCell(r,arr));recalc(tr,r);return tr}
 function rowRemark(r){let tr=document.createElement('tr');tr.dataset.row=store.other.indexOf(r);let c=td(),i=document.createElement('input');i.dataset.col=0;i.className='part';i.value=r.part||'';i.placeholder='Part number / code';i.oninput=()=>{r.part=i.value;save()};c.append(i);tr.append(c);c=td();let t=document.createElement('textarea');t.dataset.col=1;t.value=r.remark||'';t.placeholder='Remark यहाँ लिखें';t.oninput=()=>{r.remark=t.value;save()};c.append(t);tr.append(c,statusCell(r),removeCell(r,store.other));return tr}
 function stats(){let data=visibleRows();$('total').textContent=data.length;$('pending').textContent=data.filter(r=>!r.status).length;$('done').textContent=data.filter(r=>r.status&&(Number(r.approvals)||0)<=1).length;$('revised').textContent=data.filter(r=>r.status&&(Number(r.approvals)||0)>1).length}
 function billHeader(b,idx){
@@ -242,17 +265,18 @@ function billHeader(b,idx){
  typeSelect.value=b.billType||'';typeSelect.disabled=branch==='AKKI';typeSelect.addEventListener('change',()=>{b.billType=typeSelect.value;save()});typeLabel.append(typeSelect);wrap.append(typeLabel);
  editableMeta('Bill Remark','billRemark','Remark for entire bill','bill-remark');
  let count=document.createElement('span');count.className='bill-count';count.textContent=b.rows.length+' items';wrap.append(count);
- let focus=document.createElement('button');focus.textContent=active===b.id?'● Paste Target':'Select for Paste';focus.className=active===b.id?'bill-focus':'';focus.classList.toggle('hidden',branch==='AKKI');focus.onclick=()=>{active=b.id;render();$('paste-area').focus()};wrap.append(focus);
- let del=document.createElement('button');del.textContent='Delete Bill';del.className='bill-delete';del.classList.toggle('hidden',branch==='AKKI');del.onclick=()=>deleteBill(b);wrap.append(del);
+ let focus=document.createElement('button');focus.textContent=active===b.id?'● Paste Target':'Select for Paste';focus.className=active===b.id?'bill-focus':'';focus.classList.toggle('hidden',branch==='AKKI');focus.onclick=()=>{if(rgOriginal&&rgBill!==b.id){rgReset()}active=b.id;render();$('paste-area').focus()};wrap.append(focus);
+ let del=document.createElement('button');del.textContent='Delete Bill';del.className='bill-delete';del.classList.toggle('hidden',false);del.onclick=()=>branch==='AKKI'?rgDeleteMasterBill(b):deleteBill(b);wrap.append(del);
  cell.append(wrap);tr.append(cell);return tr
 }
 function deleteBill(b){if(branch==='AKKI')return;if(!confirm('Delete bill '+(b.number||'(unnumbered)')+' and ALL '+b.rows.length+' items permanently?'))return;let ix=bills().indexOf(b);if(ix<0)return;bills().splice(ix,1);active=bills()[Math.max(0,ix-1)]?.id||null;ensure();save();render();toast('Bill deleted from cloud')}
-function render(){let o=other();$('rate-table').classList.toggle('hidden',o);$('paste-details').classList.toggle('hidden',branch==='AKKI');$('remark-table').classList.toggle('hidden',!o);$('new-bill').classList.toggle('hidden',o||branch==='AKKI');$('show-all').classList.toggle('hidden',o||branch==='AKKI');$('show-all').classList.toggle('primary',all);$('show-all').textContent=all?'✓ All Bills':'Show All Bills';$('sheet-title').textContent=o?'Other — Remarks':branch==='AKKI'?'AKKI — All Users Master Workspace':branch+' — Rate Limit Sheet';$('sheet-sub').textContent=o?'Part Number और Remark editable':'Search bill numbers, products and remarks • red cells = missing / changed';$('paste-help').innerHTML=o?'Part Number और Remark के 2 columns paste करें — तुरंत add होंगे।':'Software से <strong>Sr. No से CD (12 columns)</strong> copy करें। Ctrl+V करते ही selected bill में add होगा।';$('delete-bill').classList.toggle('hidden',o||branch==='AKKI');$('clear').textContent=o?'All Clear (Other)':'All Clear (Current User)';$('clear').disabled=branch==='AKKI';let body=$(o?'remark-body':'rate-body');body.replaceChildren();if(o){store.other.filter(matches).forEach(r=>body.append(rowRemark(r)))}else{shownBills().forEach((b,idx)=>{let full=billMatches(b);let rows=full?b.rows:b.rows.filter(matches);if(query&&!rows.length&&!full)return;body.append(billHeader(b,idx));rows.forEach(r=>body.append(rowRate(r,b.rows,b)))})}if(!body.children.length){let tr=document.createElement('tr'),c=td();c.colSpan=o?4:17;c.className='empty-placeholder';c.textContent=query?'कोई matching bill या item नहीं मिला।':o?'Other में paste करके remark add करें।':'नीचे Excel data paste करें — item ऊपर तुरंत जुड़ जाएगा।';tr.append(c);body.append(tr)}stats()}
+function render(){let o=other();$('rate-table').classList.toggle('hidden',o);$('paste-details').classList.toggle('hidden',branch==='AKKI');$('remark-table').classList.toggle('hidden',!o);$('new-bill').classList.toggle('hidden',o||branch==='AKKI');$('show-all').classList.toggle('hidden',o||branch==='AKKI');$('show-all').classList.toggle('primary',all);$('show-all').textContent=all?'✓ All Bills':'Show All Bills';$('sheet-title').textContent=o?'Other — Remarks':branch==='AKKI'?'AKKI — All Users Master Workspace':branch+' — Rate Limit Sheet';$('sheet-sub').textContent=o?'Part Number और Remark editable':'Search bill numbers, products and remarks • red cells = missing / changed';$('paste-help').innerHTML=o?'Part Number और Remark के 2 columns paste करें — तुरंत add होंगे।':'Software से <strong>Sr. No से CD (12 columns)</strong> Ctrl+V करें → उसी बॉक्स में Edit करें → नीचे <strong>Add to Bill</strong> दबाएँ।';$('delete-bill').classList.toggle('hidden',o||branch==='AKKI');$('clear').textContent=o?'All Clear (Other)':'All Clear (Current User)';$('clear').disabled=branch==='AKKI';let body=$(o?'remark-body':'rate-body');body.replaceChildren();if(o){store.other.filter(matches).forEach(r=>body.append(rowRemark(r)))}else{shownBills().forEach((b,idx)=>{let full=billMatches(b);let rows=full?b.rows:b.rows.filter(matches);if(query&&!rows.length&&!full)return;body.append(billHeader(b,idx));rows.forEach(r=>body.append(rowRate(r,b.rows,b)))})}if(!body.children.length){let tr=document.createElement('tr'),c=td();c.colSpan=o?4:17;c.className='empty-placeholder';c.textContent=query?'कोई matching bill या item नहीं मिला।':o?'Other में paste करके remark add करें।':'नीचे Excel data paste करें, Preview edit करें, फिर Add to Sheet दबाएँ।';tr.append(c);body.append(tr)}stats()}
 
 function parse(text){return String(text).replace(/\r/g,'').split('\n').filter(x=>x.trim()).map(x=>x.split('\t'))}
 function bulk(data,start=-1,col=0,target=null){if(!data.length||branch==='AKKI')return;let arr=other()?store.other:(target||ensure()).rows;if(start<0)start=arr.length;data.forEach((cols,di)=>{let at=start+di;while(arr.length<=at)arr.push(other()?freshRemark():freshRate());let r=arr[at];cols.forEach((raw,j)=>{let k=col+j;if(other()){if(k===0)r.part=safe(raw);else if(k===1)r.remark=safe(raw)}else if(k<keys.length){r[keys[k]]=safe(raw);if(!r.original)r.original={};r.original[keys[k]]=safe(raw)}})});save();render();toast(data.length+' row(s) automatically added')}
 $('branch').onchange=async e=>{const previous=branch, next=e.target.value;
  if(next===previous)return;
+ if(previous==='AKKI')akkiCommitAll();
  const oldJob=seatSync.get(previous);
  if(oldJob?.conflict){$('branch').value=previous;toast('Save conflict. Refresh before switching.');return}
  // Start outgoing save immediately; it keeps its OWN user and snapshot even if we switch seats.
@@ -274,6 +298,83 @@ $('delete-bill').onclick=()=>{if(other())return toast('Other has no bills');let 
 $('clear').onclick=()=>{const label=other()?'ALL Other remarks':branch+' ALL bills and rows';if(confirm('Delete '+label+' permanently? Take a JSON backup first.')){if(other())store.other=[];else{store.branches[branch].bills=[];active=null;all=true;ensure()}query='';$('global-search').value='';save();render();toast('All cleared')}};
 $('export').onclick=()=>{let blob=new Blob([JSON.stringify(store,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='rajgroup-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 $('import-trigger').onclick=()=>$('import-file').click();$('import-file').onchange=async e=>{let f=e.target.files[0];if(!f)return;try{let data=JSON.parse(await f.text());if(!data?.branches)throw Error('Invalid file');if(confirm('Restore backup and replace current saved data?')){store=migrate(data);active=null;all=true;query='';$('global-search').value='';ensure();save();render();toast('Backup restored')}}catch{toast('Invalid JSON backup')}e.target.value=''};
+window.addEventListener('pagehide',()=>{if(branch==='AKKI')akkiCommitAll()});
+
+// V19 — manual paste, editable textarea. Original clipboard values captured BEFORE editing.
+const rgBox=$('paste-area');
+let rgOriginal=null,rgSeat='',rgBill='';
+const rgActions=document.createElement('div');rgActions.id='rg-manual-actions';rgActions.style.cssText='display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 16px';
+rgActions.innerHTML='<button type="button" id="rg-add-pasted" class="primary" style="background:#0968cb;border-color:#0968cb;color:#fff;padding:11px 24px">+ Add to Bill</button><button type="button" id="rg-clear-pasted">Clear Paste</button><span id="rg-paste-state" aria-live="polite" style="color:#426589;font-size:13px">Paste Excel rows, edit in this box, then click Add to Bill.</span>';
+rgBox.insertAdjacentElement('afterend',rgActions);
+rgBox.style.minHeight='148px';
+rgBox.placeholder='Excel / Software: Sr No से CD तक 12 columns Ctrl+V से paste करें; यहाँ values बदलें; फिर Add to Bill दबाएँ';
+function rgReset(){rgOriginal=null;rgSeat='';rgBill='';rgBox.value='';$('rg-paste-state').textContent='Ready to paste';}
+function rgRead(text){return parse(text).filter(row=>row.some(x=>String(x).trim()!==''))}
+function rgReady(rows){return rows.length&&rows.every(x=>x.length===12)}
+rgBox.addEventListener('paste',e=>{
+ if(branch==='AKKI')return;
+ const raw=e.clipboardData?.getData('text/plain')||'';if(!raw.trim())return;
+ e.preventDefault();e.stopImmediatePropagation();
+ const rows=rgRead(raw);
+ if(!rgReady(rows)){toast('Please paste 12 Excel columns: Sr No to CD');return}
+ // Capture original once. If another paste occurs, replace the entire draft and baseline.
+ rgOriginal=rows.map(r=>r.map(x=>String(x).trim()));
+ rgSeat=branch;rgBill=ensure()?.id||'';
+ rgBox.value=rows.map(r=>r.join('\t')).join('\n');
+ $('rg-paste-state').textContent=rows.length+' rows pasted — original values captured. Edit directly here, then Add to Bill.';
+},true);
+rgBox.addEventListener('input',()=>{
+ if(!rgOriginal)return;
+ const lines=rgRead(rgBox.value);
+ const changed=lines.reduce((n,row,i)=>n+(rgOriginal[i]&&row.some((v,c)=>[3,4,6,7,8,9,10,11].includes(c)&&String(v).trim()!==rgOriginal[i][c])?1:0),0);
+ $('rg-paste-state').textContent=lines.length+' row(s) • '+changed+' changed row(s) — NOT ADDED YET';
+});
+$('rg-clear-pasted').onclick=rgReset;
+$('rg-add-pasted').onclick=()=>{
+ if(!rgOriginal){toast('First paste Excel rows in the box');return}
+ if(branch!==rgSeat||branch==='AKKI'){toast('User changed. Please paste again.');return}
+ const target=bills().find(b=>b.id===rgBill);
+ if(!target){toast('Original bill not found. Paste again.');return}
+ const draft=rgRead(rgBox.value).map(r=>r.map(v=>String(v).trim()));
+ if(!rgReady(draft)||draft.length!==rgOriginal.length){toast('12 columns and same row count required');alert('कृपया pasted rows की संख्या और 12-column structure वैसा ही रखें।');return}
+ let updated=0;
+ draft.forEach((vals,i)=>{
+  const r=freshRate(rgOriginal[i]);
+  [3,4,6,7,8,9,10,11].forEach(k=>{r[keys[k]]=vals[k]});
+  if([3,4,6,7,8,9,10,11].some(k=>vals[k]!==rgOriginal[i][k]))updated++;
+  target.rows.push(r);
+ });
+ // Only here do entries enter employee state and cloud queue.
+ const count=draft.length;
+ rgReset();save();render();toast(count+' items added to bill • '+updated+' modified row(s) highlighted light red');
+};
+// Prevent legacy automatic paste listener from running, for main textarea and grid bulk paste.
+$('scroll').addEventListener('paste',e=>{
+ const raw=e.clipboardData?.getData('text/plain')||'';
+ if(!raw.includes('\t')&&!raw.includes('\n'))return;
+ e.preventDefault();e.stopImmediatePropagation();toast('Bulk import: paste below, edit, then click Add to Bill');
+},true);
+$('branch').addEventListener('change',rgReset,true);
+$('new-bill').addEventListener('click',rgReset,true);
+// Master only: delete a whole bill from Google Sheets AND active employee data.
+async function rgDeleteMasterBill(b){
+ if(branch!=='AKKI')return;
+ if(!confirm('AKKI MASTER: Permanently delete bill '+(b.number||b.id)+' ('+b.owner+') from Master and employee sheet? This cannot be undone.'))return;
+ syncBadge('● Deleting master bill…');
+ try{
+  await sendSnapshot({action:'deleteMasterBill',owner:b.owner,billId:b.id});
+  let removed=false;
+  for(let tries=0;tries<9;tries++){
+   await new Promise(r=>setTimeout(r,700+tries*250));
+   const result=await jsonp('master','AKKI');if(!result.ok)throw Error(result.error||'Failed');
+   if(!(result.data.bills||[]).some(z=>z.id===b.id&&z.owner===b.owner)){
+    store=migrate(result.data);serverRevision=result.token||'';render();removed=true;break;
+   }
+  }
+  if(!removed)throw Error('Deletion not confirmed yet');
+  syncBadge('✓ Master bill deleted');toast('Bill permanently deleted from Master and employee Google Sheet');
+ }catch(e){console.error(e);syncBadge('⚠ Delete unconfirmed',true);toast('Delete not confirmed. Refresh and check Google Sheet.');}
+}
 render();initCloud();
 })();
 </script></body></html>

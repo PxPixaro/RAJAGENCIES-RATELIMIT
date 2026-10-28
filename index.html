@@ -81,47 +81,102 @@ cloudNode.id='cloud-gate';
 cloudNode.style.cssText='position:fixed;inset:0;z-index:999;background:#f5f8fde8;display:flex;align-items:center;justify-content:center;font:600 18px Segoe UI,Arial;color:#1759a4;text-align:center;padding:25px';
 cloudNode.textContent='Google Sheet से कनेक्ट हो रहा है…';
 document.body.append(cloudNode);
-// Browser notifications require permission and an open browser tab.
-let notificationCursor=0,notificationPolling=false;
-function notifyDesktopV12(title,message){
- if(!('Notification' in window)||Notification.permission!=='granted')return;
- try{const n=new Notification(title,{body:message,tag:'rajgroup-'+Date.now(),icon:document.querySelector('header img')?.src||undefined});n.onclick=()=>{window.focus();n.close()}}catch(err){console.warn('Notifications blocked',err)}
+// V21: Google Sheets event stream -> in-page live alert center + Windows notifications.
+// Uses monotonically increasing sheet row cursor (not wall-clock timestamps).
+let notificationCursor=0,notificationPolling=false,notificationSeen=new Set(),notificationItems=[];
+const notifHost=document.createElement('div');notifHost.id='raj-notify-host';
+notifHost.innerHTML='<div id="raj-toast-stack" role="status" aria-live="polite"></div><section id="raj-notify-panel" hidden><div class="raj-notify-head"><strong>🔔 Latest Updates <span id="raj-notify-count"></span></strong><button type="button" id="raj-notify-close" aria-label="Close notifications">×</button></div><div id="raj-notify-list"></div><div class="raj-notify-foot"><button type="button" id="raj-notify-clear">Clear notifications</button></div></section><button type="button" id="raj-notify-toggle" aria-label="Open notifications">🔔 <span id="raj-notify-badge" hidden>0</span></button>';
+document.body.append(notifHost);
+const notifCSS=document.createElement('style');notifCSS.textContent=`
+#raj-notify-host{position:fixed;top:80px;right:18px;z-index:99999;font:13px/1.5 Inter,Arial,sans-serif;color:#1f2937;pointer-events:none}
+#raj-notify-host button,#raj-notify-panel,#raj-toast-stack .raj-alert{pointer-events:auto}
+#raj-notify-toggle{position:fixed;top:88px;right:18px;border:0;border-radius:28px;background:#145fc1;color:#fff;padding:11px 15px;box-shadow:0 5px 17px #153e7750;font-size:18px;cursor:pointer;z-index:99999}
+#raj-notify-badge{background:#eb4b40;color:white;border-radius:20px;font:700 11px Arial;padding:2px 6px;vertical-align:top}
+#raj-notify-panel{position:fixed;top:141px;right:18px;width:min(385px,calc(100vw - 35px));max-height:min(75vh,570px);overflow:hidden;background:white;border:1px solid #dbe4f4;border-radius:15px;box-shadow:0 15px 50px #1c375150;z-index:99999}
+#raj-notify-panel[hidden]{display:none}
+.raj-notify-head{padding:13px 16px;background:#edf5ff;display:flex;justify-content:space-between;align-items:center}.raj-notify-head button{border:0;background:transparent;font-size:25px;padding:0 7px}
+#raj-notify-list{max-height:460px;overflow:auto}.raj-event{padding:12px 15px;border-bottom:1px solid #eef1f6;display:flex;gap:8px;justify-content:space-between}.raj-event strong{display:block;color:#155bad;font-size:12px}.raj-event small{color:#738094}.raj-event button{align-self:start;padding:2px 8px}
+.raj-notify-foot{text-align:right;padding:8px 12px}.raj-notify-foot button{padding:5px 8px}
+#raj-toast-stack{position:fixed;top:145px;right:18px;display:flex;flex-direction:column;gap:9px;width:min(375px,calc(100vw - 35px));max-height:70vh;overflow:auto;z-index:99998}
+.raj-alert{display:flex;gap:10px;align-items:flex-start;background:#fff;border-left:5px solid #e88723;border-radius:11px;box-shadow:0 8px 25px #19385842;padding:13px;animation:raj-slide .22s ease}
+.raj-alert strong{display:block;color:#145fc1}.raj-alert .raj-message{flex:1;min-width:0;overflow-wrap:anywhere}.raj-alert button{padding:0 4px;background:transparent;border:0;font-size:22px;color:#667085}
+@keyframes raj-slide{from{opacity:0;transform:translateX(25px)}to{opacity:1;transform:none}}
+@media(max-width:600px){#raj-notify-host{top:55px}#raj-notify-toggle{top:65px}}
+`;document.head.append(notifCSS);
+const notifyPanel=document.getElementById('raj-notify-panel');
+const notifyBadge=document.getElementById('raj-notify-badge');
+function refreshNotificationPanel(){
+ const list=document.getElementById('raj-notify-list');list.replaceChildren();
+ for(const x of notificationItems.slice().reverse()){
+  const div=document.createElement('div');div.className='raj-event';
+  const content=document.createElement('div');const who=document.createElement('strong');who.textContent=x.owner||'RAJ GROUP';
+  const msg=document.createElement('div');msg.textContent=x.message||'New update';
+  const tm=document.createElement('small');tm.textContent=new Date(x.time||Date.now()).toLocaleString('en-IN');
+  content.append(who,msg,tm);div.append(content);list.append(div);
+ }
+ if(!notificationItems.length)list.textContent='No updates yet';
+ document.getElementById('raj-notify-count').textContent=notificationItems.length?'('+notificationItems.length+')':'';
+ notifyBadge.hidden=!notificationItems.length;notifyBadge.textContent=String(notificationItems.length);
 }
-async function checkNotificationsV12(){
+document.getElementById('raj-notify-toggle').onclick=()=>{notifyPanel.hidden=!notifyPanel.hidden;document.getElementById('raj-toast-stack').replaceChildren()};
+document.getElementById('raj-notify-close').onclick=()=>{notifyPanel.hidden=true};
+document.getElementById('raj-notify-clear').onclick=()=>{notificationItems=[];refreshNotificationPanel();document.getElementById('raj-toast-stack').replaceChildren()};
+function notifyWindows(title,message,id){
+ if(!window.isSecureContext||!('Notification' in window)||Notification.permission!=='granted')return;
+ try{const note=new Notification(title,{body:message,tag:id||'raj-'+Date.now(),renotify:false});note.onclick=()=>{window.focus();notifyPanel.hidden=false;note.close()}}catch(error){console.warn('Chrome notification unavailable',error)}
+}
+function showUpdateAlert(ev,showDesktop=true){
+ if(notificationSeen.has(ev.id))return;
+ notificationSeen.add(ev.id);if(notificationSeen.size>350)notificationSeen=new Set(Array.from(notificationSeen).slice(-250));
+ notificationItems.push(ev);if(notificationItems.length>60)notificationItems.shift();refreshNotificationPanel();
+ const box=document.createElement('div');box.className='raj-alert';
+ const txt=document.createElement('div');txt.className='raj-message';
+ const title=document.createElement('strong');title.textContent=branch==='AKKI'?'📥 New employee update':'✅ AKKI update';
+ const message=document.createElement('div');message.textContent=ev.message||'Bill updated';
+ txt.append(title,message);const dismiss=document.createElement('button');dismiss.type='button';dismiss.textContent='×';dismiss.title='Dismiss';dismiss.onclick=()=>box.remove();box.append(txt,dismiss);
+ const stack=document.getElementById('raj-toast-stack');stack.prepend(box);while(stack.children.length>4)stack.lastElementChild.remove();
+ setTimeout(()=>box.remove(),20000);
+ if(showDesktop)notifyWindows('RAJ GROUP • '+(branch==='AKKI'?'Employee Update':'AKKI Approval'),ev.message,ev.id);
+}
+async function checkNotificationsV21(){
  if(!cloudReady||notificationPolling)return;
  notificationPolling=true;
  try{
-  const view=branch;const data=await jsonp('notifications',view);
-  if(!data.ok||view!==branch)return;
-  // First poll establishes baseline and avoids replaying old alerts.
-  if(notificationCursor){for(const event of data.events||[]){if(event.time>notificationCursor){
-    const title=view==='AKKI'?'RAJ GROUP • New employee update':'RAJ GROUP • AKKI update';
-    notifyDesktopV12(title,event.message);
-    toast(event.message);
-  }}}
-  notificationCursor=Math.max(notificationCursor,Number(data.cursor)||Date.now());
- }catch(e){console.warn('Notification polling',e)}finally{notificationPolling=false}
+  const seat=branch;
+  const data=await jsonp('notifications',seat+'',notificationCursor);
+  if(!data.ok||seat!==branch)return;
+  if(Array.isArray(data.events)){
+   for(const event of data.events){
+    const age=Date.now()-Number(event.time||0);
+    // On first page open show recent (last 5 min) events; otherwise all new events.
+    if(notificationCursor>0||(age>=0&&age<5*60*1000))showUpdateAlert(event);
+   }
+  }
+  notificationCursor=Number(data.cursor)||notificationCursor;
+ }catch(error){console.warn('Notification sync:',error)}finally{notificationPolling=false}
 }
+// New wrapper supports independent notification cursor query.
+function checkNotificationsV12(){return checkNotificationsV21()}
 function showPermissionButtonV12(){
  if(!('Notification' in window))return;
  const btn=document.createElement('button');btn.type='button';btn.id='enable-notifications';
- btn.textContent=Notification.permission==='granted'?'🔔 Notifications On':'🔔 Enable Notifications';
- btn.style.cssText='position:fixed;right:16px;bottom:17px;z-index:500;background:#145fc1;border:0;color:white;border-radius:11px;padding:10px 15px;font:500 13px Segoe UI,Arial;box-shadow:0 3px 16px #31517f55;cursor:pointer';
- btn.onclick=async()=>{try{const p=await Notification.requestPermission();btn.textContent=p==='granted'?'🔔 Notifications On':'🔕 Notifications Blocked';if(p==='granted')toast('Chrome notifications enabled')}catch(e){toast('Browser notification permission unavailable')}};
+ btn.textContent=Notification.permission==='granted'?'🔔 Windows Alerts On':'🔔 Enable Windows Alerts';
+ btn.style.cssText='position:fixed;right:17px;bottom:17px;z-index:500;background:#145fc1;border:0;color:white;border-radius:11px;padding:10px 15px;font:500 13px Segoe UI,Arial;box-shadow:0 3px 16px #31517f55;cursor:pointer';
+ btn.onclick=async()=>{try{const permission=await Notification.requestPermission();btn.textContent=permission==='granted'?'🔔 Windows Alerts On':'🔕 Windows Alerts Blocked';if(permission==='granted')notifyWindows('RAJ GROUP','Test: Windows notifications enabled','raj-test-'+Date.now())}catch(err){console.warn(err)}};
  document.body.append(btn);
 }
 showPermissionButtonV12();
-setInterval(checkNotificationsV12,10000);
+setInterval(checkNotificationsV21,6500);
 let serverRevision='',localDirty=false,syncRunning=false,cloudTimer=null,cloudReady=false,lastUserChange=0,akkiQueue=Promise.resolve();
 function syncBadge(message,isError=false){const b=document.querySelector('.badge');if(b){b.textContent=message;b.style.color=isError?'#bb2638':'#1963aa'}}
-function jsonp(action,selectedUser=branch){return new Promise((resolve,reject)=>{
+function jsonp(action,selectedUser=branch,cursor=0){return new Promise((resolve,reject)=>{
  const cb='rajCloudCallback'+Date.now()+'_'+Math.floor(Math.random()*1e7);
  const script=document.createElement('script');let settled=false;
  const finish=(error,data)=>{if(settled)return;settled=true;clearTimeout(timeout);script.remove();try{delete window[cb]}catch{};error?reject(error):resolve(data)};
  const timeout=setTimeout(()=>finish(Error('Google Script response timeout')),25000);
  window[cb]=data=>finish(null,data);
  script.onerror=()=>finish(Error('Google Script URL inaccessible'));
- script.src=APPS_SCRIPT_URL+'?action='+encodeURIComponent(action)+'&user='+encodeURIComponent(selectedUser)+'&callback='+cb+'&t='+Date.now();
+ script.src=APPS_SCRIPT_URL+'?action='+encodeURIComponent(action)+'&user='+encodeURIComponent(selectedUser)+'&callback='+cb+'&since='+encodeURIComponent(cursor)+'&t='+Date.now();
  document.head.append(script);
 })}
 async function sendSnapshot(payload){
@@ -284,7 +339,7 @@ $('branch').onchange=async e=>{const previous=branch, next=e.target.value;
  if(oldJob?.conflict){$('branch').value=previous;toast('Save conflict. Refresh before switching.');return}
  // Start outgoing save immediately; it keeps its OWN user and snapshot even if we switch seats.
  if(oldJob?.dirty){clearTimeout(oldJob.timer);flushSeat(previous)}
- branch=next;notificationCursor=0;cloudReady=false;cloudNode.textContent='Loading '+branch+'…';document.body.append(cloudNode);try{const response=await jsonp(next==='AKKI'?'master':'user',next);if(next!==branch)return;if(!response.ok)throw Error(response.error||'Failed');const unfinished=seatSync.get(next);
+ branch=next;notificationCursor=0;notificationItems=[];notificationSeen.clear();refreshNotificationPanel();cloudReady=false;cloudNode.textContent='Loading '+branch+'…';document.body.append(cloudNode);try{const response=await jsonp(next==='AKKI'?'master':'user',next);if(next!==branch)return;if(!response.ok)throw Error(response.error||'Failed');const unfinished=seatSync.get(next);
  store=migrate(response.data||{});serverRevision=response.token||'';
  if(unfinished&&(unfinished.running||unfinished.dirty)){
    store.branches[next].bills=JSON.parse(JSON.stringify(unfinished.snapshot.bills));

@@ -64,7 +64,9 @@ button,.btn{border-color:#dce5f2;font-weight:500;color:#28527f;transition:backgr
 const KEY='rajgroup-v11',branches=['Shailesh','Darshil','Dipak','User 4','User 5','AKKI'],keys=['sr','code','name','hsn','unit','qty','rate','disc','discAmt','schDisc','schRs','cd'];
 const editable=new Set(['hsn','unit','rate','disc','discAmt','schDisc','schRs','cd']),required=new Set(['hsn','unit','rate','disc']);
 const $=id=>document.getElementById(id),safe=v=>String(v??'').trim();
-let serial=0,branch='Shailesh',active=null,all=true,query='',dateFilter='',timer,store;
+// Date selected by default is the local device date (not UTC).
+function rgTodayLocal(){const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')}
+let serial=0,branch='Shailesh',active=null,all=true,query='',dateFilter=rgTodayLocal(),timer,store;
 function id(){return 'bill-'+Date.now().toString(36)+'-'+(++serial)}
 function empty(){let b={};branches.forEach(k=>b[k]={bills:[]});return {version:4,branches:b,other:[]}}
 function migrate(x){const v=empty();if(!x)return v;const b=x.bills||x.branches?.[branch]?.bills||[];v.branches[branch].bills=(Array.isArray(b)?b:[]).filter(z=>Array.isArray(z.rows)).map(z=>({id:z.id||id(),number:z.number||'',billRemark:z.billRemark||'',billType:z.billType||'',createdAt:z.createdAt||'',owner:z.owner||'',rows:z.rows.map(r=>({...r,original:r.original||Object.fromEntries(keys.map(k=>[k,safe(r[k])])),uid:r.uid||id()}))}));v.other=Array.isArray(x.other)?x.other:[];return v}
@@ -235,7 +237,8 @@ function other(){return false}
 function bills(){return other()?[]:store.branches[branch].bills}
 function selected(){return bills().find(x=>x.id===active)}
 function ensure(){if(!selected()){if(!bills().length&&branch!=='AKKI')bills().push({id:id(),rows:[],createdAt:new Date().toISOString()});active=bills()[bills().length-1]?.id||null}return selected()}
-function shownBills(){return (all||query||branch==='AKKI'?bills():selected()?[selected()]:[]).filter(b=>!dateFilter||safe(b.createdAt).slice(0,10)===dateFilter)}
+function rgBillLocalDate(v){const str=safe(v);if(!str)return '';if(/^\d{4}-\d\d-\d\d$/.test(str))return str;const d=new Date(str);return Number.isNaN(d.getTime())?str.slice(0,10):[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')}
+function shownBills(){return (all||query||branch==='AKKI'?bills():selected()?[selected()]:[]).filter(b=>!dateFilter||rgBillLocalDate(b.createdAt)===dateFilter)}
 function matches(r){if(!query)return true;const vals=other()?[r.part,r.remark,r.status?'approved':'pending']:keys.map(k=>r[k]).concat(amounts(r),r.itemRemark||'',r.status?'approved':'pending');return vals.some(v=>safe(v).toLowerCase().includes(query))}
 function billMatches(b){return !!query&&[b.number,b.billRemark,b.billType].some(v=>safe(v).toLowerCase().includes(query))}
 function visibleRows(){return other()?store.other.filter(matches):shownBills().flatMap(b=>billMatches(b)?b.rows:b.rows.filter(matches))}
@@ -287,8 +290,13 @@ $('branch').onchange=async e=>{const previous=branch, next=e.target.value;
    store.branches[next].bills=JSON.parse(JSON.stringify(unfinished.snapshot.bills));
    store.other=JSON.parse(JSON.stringify(unfinished.snapshot.other));
  }
- if(next!=='AKKI')if(!unfinished||( !unfinished.running&&!unfinished.dirty))seatSync.set(next,{dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null});active=null;all=true;query='';dateFilter='';$('date-filter').value='';$('global-search').value='';ensure();render();cloudReady=true;cloudNode.remove();checkNotificationsV12();syncBadge('✓ '+branch+' connected');}catch(error){cloudNode.textContent='Error: '+error.message;syncBadge('⚠ Unable to load user',true)}};
+ if(next!=='AKKI')if(!unfinished||( !unfinished.running&&!unfinished.dirty))seatSync.set(next,{dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null});active=null;all=true;query='';dateFilter=rgTodayLocal();$('date-filter').value=dateFilter;$('global-search').value='';ensure();render();cloudReady=true;cloudNode.remove();checkNotificationsV12();syncBadge('✓ '+branch+' connected');}catch(error){cloudNode.textContent='Error: '+error.message;syncBadge('⚠ Unable to load user',true)}};
 $('date-filter').onchange=e=>{dateFilter=e.target.value;render()};
+// Clear date to see old bills without having to choose each date.
+const rgAllDates=document.createElement('button');rgAllDates.type='button';rgAllDates.textContent='All Dates';rgAllDates.title='Show bills from all dates';
+rgAllDates.style.cssText='margin-left:6px;align-self:end;height:42px;font-size:12px';
+rgAllDates.onclick=()=>{dateFilter='';$('date-filter').value='';render()};
+$('date-filter').parentElement.append(rgAllDates);
 $('global-search').oninput=e=>{query=safe(e.target.value).toLowerCase();render()};
 $('new-bill').onclick=()=>{if(other())return;let b={id:id(),rows:[],createdAt:new Date().toISOString()};bills().push(b);active=b.id;all=true;query='';$('global-search').value='';save();render();$('paste-area').focus();toast('New bill ready — paste rows below')};
 $('show-all').onclick=()=>{all=!all;query='';$('global-search').value='';if(!all)ensure();render()};
@@ -375,6 +383,6 @@ async function rgDeleteMasterBill(b){
   syncBadge('✓ Master bill deleted');toast('Bill permanently deleted from Master and employee Google Sheet');
  }catch(e){console.error(e);syncBadge('⚠ Delete unconfirmed',true);toast('Delete not confirmed. Refresh and check Google Sheet.');}
 }
-render();initCloud();
+$('date-filter').value=dateFilter;render();initCloud();
 })();
 </script></body></html>

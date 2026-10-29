@@ -1,0 +1,9 @@
+RAJ GROUP V22
+1. Backup Google Sheet and working V21 Apps Script.
+2. Replace Code.gs with V22 Code.gs, save.
+3. Deploy > Manage Deployments > Edit > New Version > Deploy (same URL).
+4. Rename V22 HTML to index.html and replace on GitHub Pages.
+5. AKKI: click bell, select All employees / a single person and Send Message.
+6. Each user: click Sound Off once to enable the two-note beep (Chrome autoplay requires user interaction).
+7. Notifications require the page to remain open; background tabs may be throttled. Windows notification sounds are controlled by Windows/Chrome, and browser audio is not guaranteed in suspended tabs.
+8. Test with two devices before production. Anyone who can select AKKI can send messages: dropdown is not an authentication system.

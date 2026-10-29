@@ -110,7 +110,7 @@ function refreshNotificationPanel(){
  for(const x of notificationItems.slice().reverse()){
   const div=document.createElement('div');div.className='raj-event';
   const content=document.createElement('div');const who=document.createElement('strong');who.textContent=x.owner||'RAJ GROUP';
-  const msg=document.createElement('div');msg.textContent=x.message||'New update';
+  const msg=document.createElement('div');msg.textContent=x.message||'New update';msg.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55';
   const tm=document.createElement('small');tm.textContent=new Date(x.time||Date.now()).toLocaleString('en-IN');
   content.append(who,msg,tm);div.append(content);list.append(div);
  }
@@ -118,7 +118,56 @@ function refreshNotificationPanel(){
  document.getElementById('raj-notify-count').textContent=notificationItems.length?'('+notificationItems.length+')':'';
  notifyBadge.hidden=!notificationItems.length;notifyBadge.textContent=String(notificationItems.length);
 }
-document.getElementById('raj-notify-toggle').onclick=()=>{notifyPanel.hidden=!notifyPanel.hidden;document.getElementById('raj-toast-stack').replaceChildren()};
+// V22: optional audible alert (requires a user gesture to unlock Web Audio).
+let rajSoundEnabled=false,rajAudioCtx=null;
+function rajPlayAlert(){
+ if(!rajSoundEnabled)return;
+ try{
+  const ctx=rajAudioCtx;if(!ctx||ctx.state!=='running')return;
+  const now=ctx.currentTime;
+  [[0,880,.10],[.13,1175,.12]].forEach(([at,freq,dur])=>{
+   const oscillator=ctx.createOscillator(),gain=ctx.createGain();
+   oscillator.type='sine';oscillator.frequency.value=freq;
+   gain.gain.setValueAtTime(.0001,now+at);
+   gain.gain.exponentialRampToValueAtTime(.07,now+at+.015);
+   gain.gain.exponentialRampToValueAtTime(.0001,now+at+dur);
+   oscillator.connect(gain);gain.connect(ctx.destination);
+   oscillator.start(now+at);oscillator.stop(now+at+dur+.01);
+  });
+ }catch(err){console.warn('Notification tone unavailable',err)}
+}
+const rajAudioButton=document.createElement('button');rajAudioButton.type='button';
+rajAudioButton.textContent='🔕 Sound Off';rajAudioButton.title='Click to enable/disable notification sounds';
+rajAudioButton.style.cssText='position:fixed;right:18px;bottom:72px;z-index:500;background:#fff;border:1px solid #b9cbe2;border-radius:11px;padding:9px 12px;font:500 12px Arial;color:#145fc1;cursor:pointer;box-shadow:0 3px 14px #31517f33';
+rajAudioButton.onclick=async()=>{
+ rajSoundEnabled=!rajSoundEnabled;
+ if(rajSoundEnabled){try{rajAudioCtx=rajAudioCtx||new (window.AudioContext||window.webkitAudioContext)();await rajAudioCtx.resume();rajPlayAlert()}catch(e){rajSoundEnabled=false;console.warn(e)}}
+ rajAudioButton.textContent=rajSoundEnabled?'🔊 Sound On':'🔕 Sound Off';
+};document.body.append(rajAudioButton);
+// V22: AKKI -> all employees or individual employee. Messages use the same existing notification stream.
+const rajAdminBox=document.createElement('div');rajAdminBox.id='raj-admin-message-box';
+rajAdminBox.style.cssText='padding:12px;border-top:1px solid #dbe4f4;background:#f6faff;display:none';
+rajAdminBox.innerHTML='<strong style="display:block;margin-bottom:8px;color:#155bad">✉ AKKI Message</strong><select id="raj-admin-recipient" style="width:100%;margin-bottom:7px;padding:7px"><option value="ALL">All employees</option><option>Shailesh</option><option>Darshil</option><option>Dipak</option><option>User 4</option><option>User 5</option></select><textarea id="raj-admin-text" rows="3" maxlength="1000" placeholder="कर्मचारियों को मैसेज लिखें..." style="width:100%;padding:8px;resize:vertical;border:1px solid #cad8ec;border-radius:7px"></textarea><button id="raj-admin-send" type="button" style="background:#155bad;color:#fff;margin-top:6px">Send Message</button><span id="raj-admin-result" style="font-size:11px;margin-left:8px"></span>';
+notifyPanel.append(rajAdminBox);
+notifyPanel.style.overflowY='auto';
+document.getElementById('raj-notify-list').style.maxHeight='300px';
+function rajAdminVisible(){rajAdminBox.style.display=branch==='AKKI'?'block':'none'}
+const rajOldToggle=document.getElementById('raj-notify-toggle');
+const rajSend=document.getElementById('raj-admin-send');
+rajSend.onclick=async()=>{
+ if(branch!=='AKKI')return;
+ const message=document.getElementById('raj-admin-text').value.trim();
+ if(!message)return alert('Please type a message first.');
+ const target=document.getElementById('raj-admin-recipient').value;
+ rajSend.disabled=true;document.getElementById('raj-admin-result').textContent='Sending…';
+ try{
+  await sendSnapshot({action:'adminMessage',sender:'AKKI',target,message});
+  document.getElementById('raj-admin-result').textContent='Sent request ✓';
+  document.getElementById('raj-admin-text').value='';
+ }catch(err){document.getElementById('raj-admin-result').textContent='Send failed';console.error(err)}
+ finally{rajSend.disabled=false}
+};
+document.getElementById('raj-notify-toggle').onclick=()=>{rajAdminVisible();notifyPanel.hidden=!notifyPanel.hidden;document.getElementById('raj-toast-stack').replaceChildren()};
 document.getElementById('raj-notify-close').onclick=()=>{notifyPanel.hidden=true};
 document.getElementById('raj-notify-clear').onclick=()=>{notificationItems=[];refreshNotificationPanel();document.getElementById('raj-toast-stack').replaceChildren()};
 function notifyWindows(title,message,id){
@@ -136,6 +185,7 @@ function showUpdateAlert(ev,showDesktop=true){
  txt.append(title,message);const dismiss=document.createElement('button');dismiss.type='button';dismiss.textContent='×';dismiss.title='Dismiss';dismiss.onclick=()=>box.remove();box.append(txt,dismiss);
  const stack=document.getElementById('raj-toast-stack');stack.prepend(box);while(stack.children.length>4)stack.lastElementChild.remove();
  setTimeout(()=>box.remove(),20000);
+ rajPlayAlert();
  if(showDesktop)notifyWindows('RAJ GROUP • '+(branch==='AKKI'?'Employee Update':'AKKI Approval'),ev.message,ev.id);
 }
 async function checkNotificationsV21(){

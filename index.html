@@ -216,7 +216,7 @@ function showPermissionButtonV12(){
  document.body.append(btn);
 }
 showPermissionButtonV12();
-setInterval(checkNotificationsV21,6500);
+setInterval(checkNotificationsV21,3000);
 let serverRevision='',localDirty=false,syncRunning=false,cloudTimer=null,cloudReady=false,lastUserChange=0,akkiQueue=Promise.resolve();
 function syncBadge(message,isError=false){const b=document.querySelector('.badge');if(b){b.textContent=message;b.style.color=isError?'#bb2638':'#1963aa'}}
 function jsonp(action,selectedUser=branch,cursor=0){return new Promise((resolve,reject)=>{
@@ -243,7 +243,7 @@ function queueCloudSave(){
  if(!job){job={dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null};seatSync.set(user,job)}
  job.dirty=true;job.snapshot={bills:JSON.parse(JSON.stringify(store.branches[user].bills)),other:JSON.parse(JSON.stringify(store.other))};
  lastUserChange=Date.now();syncBadge('● Saving to Google Sheet…');
- clearTimeout(job.timer);job.timer=setTimeout(()=>flushSeat(user),1100);
+ clearTimeout(job.timer);job.timer=setTimeout(()=>flushSeat(user),600);
 }
 async function flushSeat(user){
  const job=seatSync.get(user);
@@ -254,7 +254,7 @@ async function flushSeat(user){
   await sendSnapshot({action:'saveUser',user,baseToken:job.revision,token,data:snapshot});
   let confirmed=false;
   for(let i=0;i<7;i++){
-   await new Promise(r=>setTimeout(r,450+i*230));
+   await new Promise(r=>setTimeout(r,300+i*220));
    const info=await jsonp('state',user);
    if(!info.ok)throw Error(info.error||'Server error');
    if(info.token===token){job.revision=info.token;confirmed=true;break}
@@ -272,6 +272,39 @@ async function flushSeat(user){
   if(job.dirty&&!job.conflict){clearTimeout(job.timer);job.timer=setTimeout(()=>flushSeat(user),1500)}
  }
 }
+// V23: lightweight change tokens: avoid downloading the entire Master on every poll.
+// This is near-live best-effort, not a guaranteed 1-2 second delivery SLA.
+let liveVersion='', liveFetchRunning=false, livePollRunning=false;
+async function fetchLiveRevision(view){
+ const reply=await jsonp('version',view);
+ if(!reply.ok)throw Error(reply.error||'Version unavailable');
+ return String(reply.version||'');
+}
+async function checkLiveUpdatesV23(){
+ if(!cloudReady||livePollRunning||liveFetchRunning)return;
+ const view=branch,job=seatSync.get(view);
+ if(job?.dirty||job?.running||(view==='AKKI'&&(akkiDrafts.size||akkiRequests>0||document.activeElement?.matches('.item-remark, input.editable')))||Date.now()-lastUserChange<1400)return;
+ livePollRunning=true;
+ try{
+  const version=await fetchLiveRevision(view);
+  if(view!==branch)return;
+  if(liveVersion===''){liveVersion=version;return}
+  if(version===liveVersion)return;
+  liveFetchRunning=true;
+  const remote=await jsonp(view==='AKKI'?'master':'user',view);
+  if(view!==branch||!remote.ok||seatSync.get(view)?.dirty||seatSync.get(view)?.running)return;
+  // Do not replace unsent draft data or an in-progress master edit.
+  if(view==='AKKI'&&(akkiDrafts.size||akkiRequests>0))return;
+  if(remote.token!==serverRevision){
+    store=migrate(remote.data||empty());serverRevision=remote.token||'';
+    if(seatSync.has(view))seatSync.get(view).revision=serverRevision;
+    active=null;all=true;ensure();render();syncBadge('↻ Live updated from Google Sheet');
+  }
+  liveVersion=version;
+ }catch(err){console.warn('V23 live sync',err)}
+ finally{livePollRunning=false;liveFetchRunning=false}
+}
+setInterval(checkLiveUpdatesV23,2200);
 async function initCloud(){
  if(!APPS_SCRIPT_URL.startsWith('https://script.google.com/macros/s/')){
   cloudNode.innerHTML='Google Sheets सेटअप बाकी है।<br>HTML में APPS_SCRIPT_URL डालें।';
@@ -284,13 +317,8 @@ async function initCloud(){
   active=null;ensure();render();
   checkNotificationsV12();
   cloudNode.remove();syncBadge('✓ Connected to Google Sheet');
-  setInterval(async()=>{
-   if(!cloudReady||(seatSync.get(branch)?.dirty||seatSync.get(branch)?.running)||(branch==='AKKI'&&(akkiDrafts.size||akkiRequests>0||!!document.activeElement?.matches('.item-remark, input.editable')))||Date.now()-lastUserChange<3500)return;
-   try{const viewing=branch;const remote=await jsonp(viewing==='AKKI'?'master':'user',viewing);if(viewing!==branch||!cloudReady||!remote.ok||remote.token===serverRevision)return;
-      store=migrate(remote.data||empty());serverRevision=remote.token||'';if(seatSync.has(branch))seatSync.get(branch).revision=serverRevision;
-      active=null;all=true;ensure();render();syncBadge('↻ Updated from Google Sheet');
-   }catch(e){syncBadge('⚠ Connection issue',true)}
-  },12000);
+  // V23 lightweight polling is installed once globally above.
+  try{liveVersion=await fetchLiveRevision(branch)}catch(e){console.warn('Version startup',e)}
  }catch(e){
   console.error(e);syncBadge('⚠ Google Sheet connection failed',true);
   cloudNode.innerHTML='Google Sheet से कनेक्शन नहीं हुआ।<br>'+String(e.message||e)+'<br><button onclick="location.reload()" style="margin-top:12px">Retry</button>';
@@ -310,7 +338,7 @@ function akkiSchedule(r,changes){
  if(!entry){entry={row:r,changes:{},timer:null};akkiDrafts.set(key,entry)}
  Object.assign(entry.changes,changes);
  clearTimeout(entry.timer);
- entry.timer=setTimeout(()=>akkiCommitKey(key),1150);
+ entry.timer=setTimeout(()=>akkiCommitKey(key),800);
 }
 function akkiCommitKey(key){
  const entry=akkiDrafts.get(key);
@@ -329,7 +357,7 @@ function akkiPatch(r,changes){
    await sendSnapshot({action:'patchAkki',owner,uid,changes});
    // Confirm via the shared Master view, not merely the network request.
    for(let i=0;i<7;i++){
-     await new Promise(resolve=>setTimeout(resolve,700+i*250));
+     await new Promise(resolve=>setTimeout(resolve,350+i*220));
      const result=await jsonp('master');
      if(!result.ok)throw Error(result.error||'Update failed');
      const item=(result.data?.bills||[]).flatMap(b=>b.rows||[]).find(x=>x.uid===uid&&x.owner===owner);
@@ -395,7 +423,7 @@ $('branch').onchange=async e=>{const previous=branch, next=e.target.value;
    store.branches[next].bills=JSON.parse(JSON.stringify(unfinished.snapshot.bills));
    store.other=JSON.parse(JSON.stringify(unfinished.snapshot.other));
  }
- if(next!=='AKKI')if(!unfinished||( !unfinished.running&&!unfinished.dirty))seatSync.set(next,{dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null});active=null;all=true;query='';dateFilter=rgTodayLocal();$('date-filter').value=dateFilter;$('global-search').value='';ensure();render();cloudReady=true;cloudNode.remove();checkNotificationsV12();syncBadge('✓ '+branch+' connected');}catch(error){cloudNode.textContent='Error: '+error.message;syncBadge('⚠ Unable to load user',true)}};
+ if(next!=='AKKI')if(!unfinished||( !unfinished.running&&!unfinished.dirty))seatSync.set(next,{dirty:false,running:false,timer:null,revision:serverRevision,snapshot:null});active=null;all=true;query='';dateFilter=rgTodayLocal();$('date-filter').value=dateFilter;$('global-search').value='';ensure();render();cloudReady=true;cloudNode.remove();checkNotificationsV12();fetchLiveRevision(next).then(v=>{if(branch===next)liveVersion=v}).catch(()=>{});syncBadge('✓ '+branch+' connected');}catch(error){cloudNode.textContent='Error: '+error.message;syncBadge('⚠ Unable to load user',true)}};
 $('date-filter').onchange=e=>{dateFilter=e.target.value;render()};
 // Clear date to see old bills without having to choose each date.
 const rgAllDates=document.createElement('button');rgAllDates.type='button';rgAllDates.textContent='All Dates';rgAllDates.title='Show bills from all dates';
